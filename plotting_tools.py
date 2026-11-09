@@ -199,6 +199,59 @@ def plot_squiggly_line(x0, y0, x1, y1, amp=0.2, periods=8, **kw):
                         [y1+l_arrow_y*np.sin(theta), y1+l_arrow_y/2*np.sin(theta+np.pi/2), y1, y1+l_arrow_y/2*np.sin(theta-np.pi/2)]]).T
         ax.add_patch(patches.Polygon(pts, **_plot_args))
 
+def plot_drive(x0, y0, x1, y1, amp=0.2, periods=8, **kw):
+    '''
+    Draw a squiggly line.
+    '''
+    # arrow plot flags
+    arrow_0 = kw.get('arrow_0', False)
+    arrow_1 = kw.get('arrow_1', True)
+    # arrow dimensionts
+    l_arrow_x = kw.get('l_arrow_x', .1)
+    l_arrow_y = kw.get('l_arrow_y', .1)
+    dx = x1-x0
+    dy = y1-y0
+    theta = np.arctan2(dy, dx)
+    if arrow_0:
+        x0 = x0 + l_arrow_x*np.cos(theta)
+        y0 = y0 + l_arrow_y*np.sin(theta)
+    if arrow_1:
+        x1 = x1 - l_arrow_x*np.cos(theta)
+        y1 = y1 - l_arrow_y*np.sin(theta)
+    # get current axis
+    ax = kw.get('ax', plt.gca())
+    # Plot settings
+    _plot_args = dict(color=kw.get('color', 'k'), lw=kw.get('lw', 2), solid_capstyle='round', clip_on=False)
+    # compute displacement
+    dx = x1-x0
+    dy = y1-y0
+    theta = np.arctan2(dy, dx)
+    L = np.sqrt(dx**2 + dy**2)/2
+    # midpoint
+    x_avg, y_avg = (x0+x1)/2, (y0+y1)/2
+    # waveform
+    pad = kw.get('pad', L/5)
+    phi = np.linspace(0, 2*np.pi, 101)*periods
+    x = np.linspace(-(L-pad), (L-pad), len(phi))
+    y = np.exp(-(np.linspace(-1, 1, len(phi))/0.5)**2) * np.sin(phi)*amp 
+    # add padding
+    x = np.array([-L]+list(x)+[L])
+    y = np.array([0]+list(y)+[0])
+    # plot
+    ax.plot(x*np.cos(theta)-y*np.sin(theta) + x_avg, y*np.cos(theta)+x*np.sin(theta) + y_avg, **_plot_args)
+    # arrow
+    _plot_args = dict(color=kw.get('color', 'k'), lw=0, clip_on=False)
+    # arrow at point 0
+    if arrow_0:
+        pts = np.array([[x0+l_arrow_x*np.cos(theta), x0+l_arrow_x/2*np.cos(theta+np.pi/2), x0, x0+l_arrow_x/2*np.cos(theta-np.pi/2)],
+                        [y0-l_arrow_y*np.sin(theta), y0-l_arrow_y/2*np.sin(theta+np.pi/2), y0, y0-l_arrow_y/2*np.sin(theta-np.pi/2)]]).T
+        ax.add_patch(patches.Polygon(pts, **_plot_args))
+    # arrow at point 1
+    if arrow_1:
+        pts = np.array([[x1+l_arrow_x*np.cos(theta), x1+l_arrow_x/2*np.cos(theta+np.pi/2), x1, x1+l_arrow_x/2*np.cos(theta-np.pi/2)],
+                        [y1+l_arrow_y*np.sin(theta), y1+l_arrow_y/2*np.sin(theta+np.pi/2), y1, y1+l_arrow_y/2*np.sin(theta-np.pi/2)]]).T
+        ax.add_patch(patches.Polygon(pts, **_plot_args))
+
 def plot_polygon_patch(xy_coords, radius=0, **kw):
     '''
     Plot polygon patch.
