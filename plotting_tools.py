@@ -285,15 +285,31 @@ def plot_arrow(x0, y0, x1, y1, arc_rad=.3, head_width=5, head_length=5, tail_wid
     '''
     Args:
         arc_rag : curvature of arrow in radians.
+    Note:
+        Each matplotlib arrowstyle only accepts some of the shape parameters:
+        the line styles ("-", "->", "<->", "-|>", ...) take head_width/head_length,
+        "simple" and "fancy" also take tail_width, and "wedge" takes tail_width only.
+        Parameters the chosen <arrowstyle> does not support are dropped instead of
+        raising, so e.g. tail_width can be left at its default with any style.
     '''
     ax = kw.pop('ax', plt.gca())
     clip_on = kw.pop('clip_on', False)
     lw = kw.pop('lw', 2)
     arrowstyle = kw.pop('arrowstyle', '<->')
     color = kw.pop('color', None)
+    # Keep only the shape parameters supported by this arrowstyle
+    _shape = dict(head_width=head_width, head_length=head_length, tail_width=tail_width)
+    try:
+        import inspect
+        _accepted = inspect.signature(patches.ArrowStyle._style_list[arrowstyle]).parameters
+        _shape = {k: v for k, v in _shape.items() if k in _accepted}
+    except (AttributeError, KeyError, ValueError):
+        _shape.pop('tail_width', None)
+    _arrowstyle = ', '.join([arrowstyle] + [f'{k}={v}' for k, v in _shape.items()])
     # Arrow
-    kw = dict(arrowstyle=f'{arrowstyle}, head_width={head_width}, head_length={head_length}')
-    ax.add_patch(patches.FancyArrowPatch((x0, y0), (x1, y1), connectionstyle=f'arc3,rad={arc_rad}', clip_on=clip_on, lw=lw, color=color, **kw))
+    ax.add_patch(patches.FancyArrowPatch((x0, y0), (x1, y1), arrowstyle=_arrowstyle,
+                                         connectionstyle=f'arc3,rad={arc_rad}',
+                                         clip_on=clip_on, lw=lw, color=color, **kw))
 
 ##############################################
 # Plotting helper functions
@@ -459,12 +475,19 @@ def move_subplot(ax, dx: float = 0, dy: float = 0, scale_x: float = 1, scale_y: 
     pos = [pos.x0+dx*pos.width*scale_x, pos.y0+dy*pos.height*scale_y, pos.width*scale_x, pos.height*scale_y]
     ax.set_position(pos)
 
-def get_cbar(mappeable=None, ax = None, orientation: str = 'vertical', pos: tuple = None, dims: tuple = None, label: str = None, unit: str = None, **kw):
+def get_cbar(mappeable=None, ax = None, orientation: str = 'vertical', pos = None, dims: tuple = None, label: str = None, unit: str = None, **kw):
     '''
     Add a cbar to subplot.
     Args:
-        pos  : colorbar position tuple in relative axis units.
+        pos  : colorbar position, either a tuple in relative axis units, or one of
+               the strings "top"/"bottom" (orientation="horizontal") and
+               "left"/"right" (orientation="vertical"). The strings place the bar
+               just outside the axes, separated by <pad>, with its ticks and label
+               on the outward facing side. "bottom" and "right" reproduce the
+               defaults used when <pos> is None.
         dims : colorbar dimensions tuple (lx, ly) in relative axis units.
+        pad  : gap between the axes and the colorbar, in relative axis units.
+               Only used when <pos> is given as a string. Defaults to 0.05.
     '''
     assert orientation in ['vertical', 'horizontal']
     cmap = kw.get('cmap', None)
@@ -484,15 +507,41 @@ def get_cbar(mappeable=None, ax = None, orientation: str = 'vertical', pos: tupl
             dims = (0.05 ,1)
         else:
             dims = (1, 0.05)
+    # <pos> given as a side: place the bar just outside the axes
+    side = None
+    if isinstance(pos, str):
+        _sides = {'horizontal': ('top', 'bottom'), 'vertical': ('left', 'right')}[orientation]
+        if pos not in _sides:
+            raise ValueError(f'pos="{pos}" is not valid for orientation="{orientation}", '
+                             f'use one of {_sides} or a tuple of relative axis units.')
+        side = pos
+        pad = kw.get('pad', 0.05)
+        pos = {'top': (0, 1+pad),
+               'bottom': (0, -(pad+dims[1])),
+               'right': (1+pad, 0),
+               'left': (-(pad+dims[0]), 0)}[side]
     if pos is None:
         if orientation == 'vertical':
             pos = (1.05 ,0)
         else:
             pos = (0, -0.1)
-            ax.xaxis.set_ticks_position('top')
-            ax.xaxis.set_label_position('top')
+            side = 'bottom'
+    # a bar below/left of the axes would collide with its ticks, so move those away
+    if side == 'bottom':
+        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_label_position('top')
+    elif side == 'left':
+        ax.yaxis.set_ticks_position('right')
+        ax.yaxis.set_label_position('right')
     cbar_ax.set_position([_pos.x0+_pos.width*pos[0], _pos.y0+_pos.height*pos[1], _pos.width*dims[0], _pos.height*dims[1]])
     cbar = fig.colorbar(mappeable, cax=cbar_ax, orientation=orientation)
+    # keep the colorbar ticks and label on the side facing away from the axes
+    if side == 'top':
+        cbar_ax.xaxis.set_ticks_position('top')
+        cbar_ax.xaxis.set_label_position('top')
+    elif side == 'left':
+        cbar_ax.yaxis.set_ticks_position('left')
+        cbar_ax.yaxis.set_label_position('left')
     # if mappeable is None and type(norm) is matplotlib.colors.LogNorm:
     #     cb.formatter = LogFormatter(10)
     #     # set ticks in log scale
@@ -740,6 +789,58 @@ class Quantum_circuit(object):
         # Plot dashed line for unfilled fraction
         if fill_fraction != 1:
             self.ax.plot(_X, _Y_s, c=color, lw=self.lw*.9, zorder=-2.1, ls='--', clip_on=False)
+        self.ax.set_xlim(_xlim), self.ax.set_ylim(_ylim)
+        self.Q_pos[qubit][0] += self.step_x*steps
+        self.ax.axhline(_y, xmax=self.Q_pos[qubit][0]-self.step_x/2, color='k', lw=self.lw, ls='-', zorder=-1, clip_on=False)
+        # add label
+        label = kw.get('label', None)
+        fontsize = kw.get('fontsize', None)
+        clabel = kw.get('clabel', None)
+        label_pos = kw.get('label_pos', 'top')
+        ylabel_correction = kw.get('ylabel_correction', 0)
+        if label:
+            assert label_pos in ['top', 'bottom'], '"label_pos" must be "top" or "bottom"'
+            if label_pos == 'bottom':
+                self.ax.text(_x+(steps-1)*self.step_x/2, _y-self.l_gate_y*(1.25/2)+ylabel_correction, f'{label}', va='top', ha='center', size=fontsize, color=clabel)
+            else:
+                self.ax.text(_x+(steps-1)*self.step_x/2, _y+self.l_gate_y*(1.25/2)+ylabel_correction, f'{label}', va='bottom', ha='center', size=fontsize, color=clabel)
+
+    def add_spectroscopy_pulse(self, qubit, steps=5, periods=5, ls='-', color='C0', amplitude=1, fill_fraction=1, **kw):
+        '''
+        Adds a spectroscopy pulse gate on a qubit.
+        Same square envelope as <add_square_gate>, modulated by a sinusoid with
+        <periods> periods inside the pulse (same convention as <plot_squiggly_line>).
+        The shaded band is the square envelope of the modulation, i.e. +/-<amplitude>.
+        Args:
+            steps        : pulse duration, in circuit steps.
+            periods      : number of modulation periods inside the pulse.
+            amplitude    : modulation amplitude, in units of half the gate height.
+                           Negative values flip the first lobe downwards.
+            fill_fraction: fraction of the pulse drawn solid, the rest is dashed.
+        '''
+        _x, _y = self.Q_pos[qubit]
+        _x_start = _x-self.l_gate_x/2
+        _x_end = _x+(steps-1)*self.step_x+self.l_gate_x/2
+        # Sample with enough points per period to keep the modulation smooth
+        n_points = kw.get('n_points', max(101, int(50*periods)))
+        # Flat padding at both ends, so the pulse starts and ends on the circuit line
+        pad = kw.get('pad', (_x_end-_x_start)/20)
+        _phi = np.linspace(0, 2*np.pi, n_points)*periods + kw.get('phase', 0)
+        _X = np.concatenate([[_x_start], np.linspace(_x_start+pad, _x_end-pad, n_points), [_x_end]])
+        _Y = np.concatenate([[_y], _y+amplitude*self.l_gate_y/2*np.sin(_phi), [_y]])
+        _xlim, _ylim = self.ax.get_xlim(), self.ax.get_ylim()
+        # Fill only fraction of the pulse
+        fill_idx = max(2, int(len(_X)*fill_fraction))
+        # Shade the square envelope of the modulation, not the modulation itself.
+        # Spans exactly the modulated section, i.e. excluding the flat padding.
+        _envelope = abs(amplitude)*self.l_gate_y/2
+        _i_env = min(fill_idx-1, len(_X)-2)
+        self.ax.fill_between([_X[1], _X[_i_env]], _y-_envelope, _y+_envelope,
+                             fc=to_rgba(color, .25), lw=0, zorder=-1.2, clip_on=False)
+        self.ax.plot(_X[:fill_idx], _Y[:fill_idx], c=color, lw=self.lw, zorder=-1.1, ls=ls, clip_on=False)
+        # Plot dashed line for unfilled fraction
+        if fill_fraction != 1:
+            self.ax.plot(_X[fill_idx-1:], _Y[fill_idx-1:], c=color, lw=self.lw*.9, zorder=-2.1, ls='--', clip_on=False)
         self.ax.set_xlim(_xlim), self.ax.set_ylim(_ylim)
         self.Q_pos[qubit][0] += self.step_x*steps
         self.ax.axhline(_y, xmax=self.Q_pos[qubit][0]-self.step_x/2, color='k', lw=self.lw, ls='-', zorder=-1, clip_on=False)
